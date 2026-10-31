@@ -8,6 +8,8 @@ from pathlib import Path
 import jwt
 from curl_cffi import requests as curl_requests
 
+from costco_mcp_server.diagnostics import no_token, token_failure
+
 # Chrome TLS impersonation is required because Costco's Akamai Bot Manager
 # drops connections with non-browser JA3/JA4 fingerprints. Python's stdlib
 # ssl (used by httpx and requests) gets silently timed out at the edge.
@@ -102,7 +104,8 @@ def _refresh_tokens(refresh_token: str) -> dict:
         impersonate=_IMPERSONATE,
         timeout=30,
     )
-    resp.raise_for_status()
+    if resp.status_code != 200:
+        raise token_failure(resp.status_code, resp.text, POLICY_NAME)
     return resp.json()
 
 
@@ -186,10 +189,7 @@ class CostcoAuth:
 
     def get_bearer_token(self) -> str:
         if not self._refresh_token:
-            raise RuntimeError(
-                f"Account '{self._account}' not authenticated. "
-                f"Use save_refresh_token to add credentials."
-            )
+            raise no_token(self._account)
 
         if self._id_token and not _is_token_expired(self._id_token):
             return self._id_token
@@ -207,6 +207,12 @@ class CostcoAuth:
         })
         logger.info("Tokens refreshed for '%s'", self._account)
         return self._id_token
+
+    def force_refresh(self) -> str:
+        """Re-read the saved token and sign in, ignoring any cached bearer token."""
+        self._load_from_disk()
+        self._id_token = None
+        return self.get_bearer_token()
 
     def save_refresh_token(self, refresh_token: str) -> None:
         self._refresh_token = refresh_token

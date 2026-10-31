@@ -8,12 +8,31 @@ These steps are manual. Nothing here is automated yet.
 
 - `main` mirrors upstream `main`. Nobody commits to it.
 - `nodescout/main` is the default branch. It is based on upstream's `0.1.2` release, and it carries this file and every fork change. Other fork branches also take the `nodescout/` prefix.
-- Runtime tags have the form `nodescout-<upstream version>-<policy number>`, for example `nodescout-0.1.2-219`. The operator's machine runs a tagged commit on `nodescout/main`.
+- Runtime tags have the form `nodescout-<upstream version>-<policy number>`, for example `nodescout-0.1.2-219`. A later fork change at the same policy adds a revision, such as `nodescout-0.1.2-219.1`. The operator's machine runs a tagged commit on `nodescout/main`.
 - Do not copy upstream's bare version tags, such as `0.1.2`, into this fork. `.github/workflows/publish.yml` would run on tags of that form if Actions were on.
+
+## How the server reports a failure
+
+An agent using this server does not know any of this history, so the server tells it what to do. The fork adds three things, and the failure messages are in `src/costco_mcp_server/diagnostics.py`:
+
+1. The MCP server instructions, which every session receives, say that if a tool fails the agent should call `doctor` once, stop retrying, and pass on the `tell_operator` text.
+2. Every failed tool call returns an error that names the problem and what to tell the operator.
+3. The `doctor` tool does a real sign-in and a small receipt read, then reports one of these statuses:
+
+| Status | Meaning | What happens next |
+| --- | --- | --- |
+| `ok` | Sign-in and a read both worked. | Nothing. |
+| `needs_fork_update` | Costco moved its sign-in policy or changed its API. | Follow the steps below. The report names the policy value to use. |
+| `needs_new_token` | The saved token is missing, expired, or revoked. | Save a new token. |
+| `blocked_by_costco` | Costco's API refused the requests with HTTP 403 or 429. | Stop using the server for now, then look at the browser fingerprint (`chrome131`). |
+| `costco_unavailable` | Costco returned a server error. | Try again later. |
+| `unknown_failure` | Anything else, including a timeout, which can mean Costco is blocking requests. | Read the report's `detail`. |
+
+When Costco makes a failure mode visible that these do not cover, add it to `diagnostics.py`.
 
 ## Updating the sign-in policy
 
-A refresh token is bound to the Azure AD B2C policy of the login that issued it, and the server has that policy hard-coded as `POLICY_NAME` in `src/costco_mcp_server/auth.py`. When they stop matching, every data call fails with HTTP 400, even though `check_auth_status` still looks healthy. It only reads the saved file. The sign-in response contains the value to use:
+A refresh token is bound to the Azure AD B2C policy of the login that issued it, and the server has that policy hard-coded as `POLICY_NAME` in `src/costco_mcp_server/auth.py`. When they stop matching, every data call fails, even though `check_auth_status` still looks healthy, because it only reads the saved file. `doctor` reports `needs_fork_update` with the value to use. It reads that value from Costco's response:
 
 ```
 AADB2C90088: The provided grant has not been issued for this endpoint.
@@ -27,7 +46,7 @@ Saving another token does not fix this. Follow these steps, where `NNN` is the n
 2. Commit it with the message `fix(auth): update Azure AD B2C policy to _NNN`.
 3. Close every Claude Code session running the server. Windows will not replace a running executable, and the install fails with "os error 32" otherwise.
 4. Run `uv sync --frozen --no-editable --no-dev --reinstall-package costco-mcp-server --refresh-package costco-mcp-server` from the repository root. The two package flags are required, because the package version does not change and a plain sync would keep the old code.
-5. Start a new session and read real data, such as recent warehouse receipts. `check_auth_status` does not prove the fix.
+5. Start a new session and run `doctor`, which should report `ok`. `check_auth_status` does not prove the fix.
 6. Tag and push with `git tag -a nodescout-0.1.2-NNN -m "Sign-in policy NNN"` and `git push origin nodescout/main nodescout-0.1.2-NNN`.
 7. Save a new token for any other account, from a fresh login. `POLICY_NAME` applies to every account, so a token from an older login now fails the same way, with the older number as `Expected Value`.
 

@@ -7,6 +7,7 @@ from typing import Any
 from curl_cffi import requests as curl_requests
 
 from costco_mcp_server.auth import CostcoAuth, WCS_CLIENT_ID
+from costco_mcp_server.diagnostics import api_failure
 from costco_mcp_server.product_cache import get_cached_names, store_names
 
 # Must match the TLS fingerprint used in auth.py — Akamai Bot Manager
@@ -223,7 +224,8 @@ class CostcoAPI:
                 logger.info("Got 401, forcing token refresh...")
                 self._auth._id_token = None  # force refresh
                 continue
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise api_failure(resp.status_code)
             return resp.json()
 
         raise RuntimeError("Authentication failed after retry")
@@ -351,7 +353,8 @@ class CostcoAPI:
                 if resp.status_code == 401 and attempt == 0:
                     self._auth._id_token = None
                     continue
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    raise api_failure(resp.status_code)
                 data = resp.json()
                 for item in data.get("data", {}).get("products", {}).get("catalogData", []):
                     desc = item.get("description", {}).get("shortDescription", "")

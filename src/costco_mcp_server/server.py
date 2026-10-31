@@ -7,14 +7,24 @@ from datetime import datetime, timedelta
 
 from mcp.server.fastmcp import FastMCP
 
-from costco_mcp_server.auth import CostcoAuth, list_accounts, get_default_account
+from costco_mcp_server.auth import CostcoAuth, POLICY_NAME, list_accounts, get_default_account
 from costco_mcp_server.api import CostcoAPI
+from costco_mcp_server.diagnostics import CostcoServiceError, FORK_PROCESS_DOC, graphql_failure
 
 # Must log to stderr to avoid corrupting MCP stdio transport
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("Costco MCP Server")
+mcp = FastMCP(
+    "Costco MCP Server",
+    instructions=(
+        "Costco warehouse receipts and online orders. This server depends on Costco's undocumented "
+        "sign-in and API, which change without notice, so it breaks from time to time. If any tool "
+        "fails, call `doctor` once, stop retrying, and give the user the `tell_operator` text from its "
+        "report. Do not ask the user for a new token unless `doctor` says to. `check_auth_status` "
+        "only reads saved files, so a healthy result from it does not mean the server works."
+    ),
+)
 
 # Cache of API instances per account
 _apis: dict[str, CostcoAPI] = {}
@@ -41,8 +51,50 @@ def _default_date_range_iso() -> tuple[str, str]:
 
 
 @mcp.tool()
+def doctor(account: str = "") -> str:
+    """Run a live health check. Call this when any other Costco tool fails.
+
+    Does a real sign-in and a small receipt read, then reports what is wrong and
+    what to tell the operator. The `status` field is "ok", "needs_fork_update",
+    "needs_new_token", "blocked_by_costco", "costco_unavailable", or "unknown_failure".
+    Give the user the `tell_operator` text, and do not retry the failed tool.
+
+    Args:
+        account: Account name (optional, uses default if empty).
+    """
+    report = {
+        "status": "ok",
+        "account": account or get_default_account(),
+        "sign_in_policy": POLICY_NAME,
+        "fork_maintenance": FORK_PROCESS_DOC,
+    }
+    try:
+        api = _get_api(account)
+        api._auth.force_refresh()
+        now = datetime.now()
+        today = f"{now.month}/{now.day:02d}/{now.year}"
+        result = api.list_receipts(today, today)
+        if result.get("errors"):
+            raise graphql_failure(result["errors"])
+    except CostcoServiceError as e:
+        report.update(status=e.status, detail=e.detail, tell_operator=e.tell_operator)
+    except Exception as e:
+        report.update(
+            status="unknown_failure",
+            detail=f"{type(e).__name__}: {e}"[:300],
+            tell_operator=(
+                "The Costco MCP failed in a way it could not classify. A timeout can mean Costco is "
+                f"blocking the requests. Share this report when looking at the fork: {FORK_PROCESS_DOC}"
+            ),
+        )
+    return json.dumps(report, indent=2)
+
+
+@mcp.tool()
 def check_auth_status(account: str = "") -> str:
-    """Check if authenticated with Costco. Shows token status and expiry.
+    """Show the saved token's status. This reads local files and does not contact Costco.
+
+    A healthy result here does not mean the server works. Use `doctor` for a live check.
 
     Args:
         account: Account name (optional, uses default if empty). Use list_accounts to see all.
