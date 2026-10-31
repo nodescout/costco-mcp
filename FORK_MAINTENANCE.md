@@ -9,7 +9,7 @@ These steps are manual. Nothing here is automated yet.
 - `main` mirrors upstream `main`. Nobody commits to it.
 - `nodescout/main` is the default branch. It is based on upstream's `0.1.2` release, and it carries this file and every fork change. Other fork branches also take the `nodescout/` prefix.
 - Runtime tags have the form `nodescout-<upstream version>-<policy number>`, for example `nodescout-0.1.2-219`. The operator's machine runs a tagged commit on `nodescout/main`.
-- Do not copy upstream's bare version tags, such as `0.1.2`, into this fork. `.github/workflows/publish.yml` runs on tags of that form.
+- Do not copy upstream's bare version tags, such as `0.1.2`, into this fork. `.github/workflows/publish.yml` would run on tags of that form if Actions were on.
 
 ## Updating the sign-in policy
 
@@ -39,6 +39,6 @@ To take an upstream release, review the diff of `src/`, `pyproject.toml`, `uv.lo
 
 Upstream's open pull request for mcp 2.x changes the server's imports. This fork is locked to mcp 1.26.0 by `uv.lock`, so the mcp 2.x change is not needed yet.
 
-## Upstream workflows in this fork
+## GitHub Actions in this fork
 
-`.github/workflows/publish.yml` publishes to PyPI and the MCP Registry, and it is disabled here, because this fork does not publish. GitHub enables a newly added workflow file by default, so check for new ones when taking upstream changes.
+GitHub Actions is turned off for this repository, because nothing here needs it and `.github/workflows/publish.yml` publishes to PyPI and the MCP Registry, which this fork does not do. If a later automation needs Actions, turn it back on and disable `publish.yml` first.
